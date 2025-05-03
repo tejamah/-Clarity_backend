@@ -1,6 +1,3 @@
-import eventlet
-eventlet.monkey_patch()
-
 from flask import Flask, jsonify, request
 from flask_socketio import SocketIO
 from flask_cors import CORS
@@ -15,7 +12,7 @@ import torch
 # === Flask Setup ===
 app = Flask(__name__)
 CORS(app)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
+socketio = SocketIO(app, cors_allowed_origins="*")  # Default async mode (threading)
 
 # === Model Setup ===
 tokenizer = AutoTokenizer.from_pretrained("teja00007/model-name")
@@ -56,14 +53,14 @@ def summarize_internal(text):
         inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
         output = model.generate(**inputs, max_new_tokens=100)
         return {"summary": tokenizer.decode(output[0], skip_special_tokens=True)}
-    except:
+    except Exception as e:
+        print(f"Summarization error: {e}")
         return {"summary": "Summary unavailable."}
 
 # === News Fetcher ===
 def fetch_and_summarize_news():
     global news_cache
     new_data = {}
-
     print("[+] Fetching and summarizing news...")
 
     for category, url in rss_feeds.items():
@@ -80,40 +77,40 @@ def fetch_and_summarize_news():
                     "title": title,
                     "summary": summary,
                     "url": entry.get("link", ""),
-                    "image": ""  # No images from RSS
+                    "image": ""  # RSS feeds don't typically contain image links
                 })
 
             new_data[category] = articles
-
         except Exception as e:
-            print(f"[{category}] Error: {e}")
+            print(f"[{category}] Error fetching or summarizing: {e}")
 
     news_cache = new_data
     socketio.emit("news_update", news_cache)
-    print("[+] Sent summarized news to all clients.")
+    print("[+] News cache updated and emitted to clients.")
 
-# === Scheduler ===
+# === Background Scheduler ===
 def schedule_updates():
     while True:
         fetch_and_summarize_news()
-        time.sleep(300)
+        time.sleep(300)  # Refresh every 5 minutes
 
-# === Routes ===
+# === HTTP Routes ===
 @app.route("/")
 def home():
-    return jsonify({"message": "AI News Summarizer API is live!"})
+    return jsonify({"message": "🧠 AI News Summarizer backend is running!"})
 
 @app.route("/news/<category>")
 def get_news(category):
     return jsonify(news_cache.get(category, []))
 
+# === WebSocket Events ===
 @socketio.on("connect")
-def handle_socket_connect():
-    print("[+] A new client connected.")
+def handle_connect():
+    print("[+] Client connected via WebSocket.")
 
-# === Start the App ===
+# === Entrypoint ===
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))  # Dynamic for Render
+    port = int(os.environ.get("PORT", 5000))  # For Render compatibility
     threading.Thread(target=schedule_updates, daemon=True).start()
     fetch_and_summarize_news()
-    socketio.run(app, host="0.0.0.0", port=port)
+    socketio.run(app, host="0.0.0.0", port=port, debug=False)

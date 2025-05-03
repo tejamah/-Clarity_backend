@@ -1,9 +1,8 @@
 flask
 flask-cors
 flask-socketio
-apscheduler
-requests
-eventlet
 feedparser
 transformers
 torch
+apscheduler
+requests
