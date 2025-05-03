@@ -5,17 +5,21 @@ import threading
 import time
 import feedparser
 import os
+
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 import torch
 
+# === Flask App Setup ===
 app = Flask(__name__)
 CORS(app)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")  # use threading mode for Render
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
-# === Model Setup ===
+# === Load Model and Tokenizer ===
+print("[+] Loading model and tokenizer...")
 tokenizer = AutoTokenizer.from_pretrained("teja00007/model-name")
 model = AutoModelForSeq2SeqLM.from_pretrained("teja00007/model-name")
 
+# === RSS Feeds ===
 rss_feeds = {
     "general": "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en",
     "technology": "https://news.google.com/rss/search?q=technology&hl=en-US&gl=US&ceid=US:en",
@@ -26,6 +30,7 @@ rss_feeds = {
 
 news_cache = {}
 
+# === Summarization API Endpoint ===
 @app.route("/summarize", methods=["POST"])
 def summarize():
     data = request.get_json()
@@ -38,16 +43,20 @@ def summarize():
         summary = tokenizer.decode(output[0], skip_special_tokens=True)
         return jsonify({"summary": summary})
     except Exception as e:
+        print(f"[!] Summarization error: {e}")
         return jsonify({"error": str(e)}), 500
 
+# === Internal Summarization ===
 def summarize_internal(text):
     try:
         inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
         output = model.generate(**inputs, max_new_tokens=100)
         return {"summary": tokenizer.decode(output[0], skip_special_tokens=True)}
-    except:
+    except Exception as e:
+        print(f"[!] Internal summarization failed: {e}")
         return {"summary": "Summary unavailable."}
 
+# === News Fetcher + Emitter ===
 def fetch_and_summarize_news():
     global news_cache
     new_data = {}
@@ -64,34 +73,37 @@ def fetch_and_summarize_news():
                     "title": title,
                     "summary": summary,
                     "url": entry.get("link", ""),
-                    "image": ""
+                    "image": ""  # Placeholder
                 })
             new_data[category] = articles
         except Exception as e:
-            print(f"[{category}] Error: {e}")
+            print(f"[!] Error in category '{category}': {e}")
     news_cache = new_data
     socketio.emit("news_update", news_cache)
-    print("[+] Sent summarized news to all clients.")
+    print("[+] News updated and sent to all clients.")
 
+# === Background Update Scheduler ===
 def schedule_updates():
     while True:
         fetch_and_summarize_news()
-        time.sleep(300)
+        time.sleep(300)  # Refresh every 5 minutes
 
+# === API Routes ===
 @app.route("/")
 def home():
-    return jsonify({"message": "AI News Summarizer API is live!"})
+    return jsonify({"message": "📰 AI News Summarizer API is live and running!"})
 
 @app.route("/news/<category>")
 def get_news(category):
     return jsonify(news_cache.get(category, []))
 
 @socketio.on("connect")
-def handle_socket_connect():
-    print("[+] A new client connected.")
+def on_connect():
+    print("[+] A client connected.")
 
+# === Start the App ===
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))  # crucial for Render
+    port = int(os.environ.get("PORT", 5000))  # Render sets this automatically
     threading.Thread(target=schedule_updates, daemon=True).start()
     fetch_and_summarize_news()
     socketio.run(app, host="0.0.0.0", port=port)
